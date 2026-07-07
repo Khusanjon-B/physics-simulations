@@ -38,13 +38,13 @@ The simulation works in **pixel space**, so `g` is a tunable constant in pixels/
 
 The heart of the project. Each file is a self-contained stage.
 
-### 1. Uncoupled (`pendulum_uncoupled.cpp`)
+### 1. Uncoupled (`pendulumUncoupled.cpp`)
 Two arms, but each treated as an **independent simple pendulum** — arm 2 swings about arm 1's moving tip using the lone-pendulum equation, ignoring the coupling forces. Structurally correct (chaining, two independent states, drawing) but physically wrong: no energy exchange between the arms, so the motion looks plausible but lifeless, with none of the characteristic chaotic whip. Built first to isolate the *structure* before adding the hard math.
 
-### 2. Euler–Cromer (`pendulum_euler.cpp`)
+### 2. Euler–Cromer (`pendulumCoupledEuler.cpp`)
 The **true coupled equations**, integrated with semi-implicit (Euler–Cromer) integration — velocity updated first, then position from the new velocity. Produces genuine chaotic motion. However, the integrator is not energy-conserving: during the violent initial fall it *injects* energy (drift spiking to 200%+), then during calmer phases it *dissipates* energy (drift going negative). Bounded but visibly inaccurate over time.
 
-### 3. RK4 (`pendulum_rk4.cpp`)
+### 3. RK4 (`pendulumRK4.cpp`)
 The same coupled equations, integrated with **4th-order Runge–Kutta**. The physics is refactored into a pure `derivatives(State) -> State` function that RK4 samples at four points per timestep (start, two midpoints, end) and blends with 1-2-2-1 weighting. Energy drift collapses to a fraction of a percent — the integrator earns its complexity. This is the definitive version.
 
 **Measured result:** switching from Euler–Cromer to RK4 took energy drift from swings of **±200%+** down to **≈0%** over the same run, confirming the accuracy gain empirically rather than by assumption.
@@ -74,7 +74,7 @@ make
 Run each iteration from a terminal on the display (raylib needs a real display server):
 
 ```bash
-./pendulum_rk4
+./pendulumRK4
 ```
 
 ---
