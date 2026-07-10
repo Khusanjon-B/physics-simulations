@@ -51,7 +51,7 @@ struct Arm {
 
     void draw() {
         DrawLineV(start, end(), c);
-        DrawCircleV(end(), r, c);
+        DrawCircleV(end(), 2*r, c);
     }
 };
 
@@ -125,6 +125,29 @@ State step(State s, State d, float h) {
              s.omega2 + d.omega2 * h };
 }
 
+// Reset button
+struct button {
+
+    string value;
+    Color c = DARKGRAY;
+    Color onhover = GRAY;
+
+    void draw () {
+
+        DrawRectangle(10, 115, 175, 30, c);
+
+        DrawText(value.c_str(), 15, 120, 20, RAYWHITE);
+
+    }
+
+    void onhoverdraw () {
+        DrawRectangle(10, 115, 175, 30, onhover);
+
+        DrawText(value.c_str(), 15, 120, 20, RAYWHITE);
+    }
+
+};
+
 // Program main entry point
 int main(void)
 {
@@ -146,12 +169,14 @@ int main(void)
 
     // UI
     bool dragging = false;
+    bool dragMid = false;
+    bool dragEnd = false;
 
     // ---- Physics constants ----
     const float g = 800.0f;   // pixels/sec^2 — tuned by feel, not real 9.8
 
     // Pendulum setup
-    Pivot p1 (0, 0, 10, RED);
+    Pivot p1 (0, 0, 20, RED);
 
     float length = 100.0f;
     float thetaInitial = 20.0f;
@@ -188,6 +213,10 @@ int main(void)
     string P;
     string D;
 
+    button trace {"Reset Trace"};
+    Rectangle traceRect = { 10, 115, 175, 30 };
+    bool traceHover = false;
+
     // Main game loop
     while (!WindowShouldClose())
     {
@@ -198,63 +227,100 @@ int main(void)
         // --- Input: drag the pivot around ---
         Vector2 world = GetScreenToWorld2D(GetMousePosition(), camera);
 
+        Vector2 screen = GetMousePosition();   // name it, for UI hit-tests
+
+        traceHover = CheckCollisionPointRec(screen, traceRect);   // screen space
+
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (CheckCollisionPointCircle(world, { p1.x, p1.y }, p1.r)) {
                 dragging = true;
+            } else if (CheckCollisionPointCircle(world, a1.end(), a1.r)) {
+                dragMid = true;
+            } else if (CheckCollisionPointCircle(world, a2.end(), a2.r)) {   // world, not screen
+                dragEnd = true;
+            } else if (CheckCollisionPointRec(screen, traceRect)) {          // screen, and full rect
+                trail = { a2.end() };                                        // reset the trace
             }
         }
+
         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
             dragging = false;
+            dragMid = false;
+            dragEnd = false;
+
+            // if we were dragging anything, the system's been repositioned —
+            // re-baseline so drift measures conservation from HERE, not from launch
+            firstFrame = true;   // reuse your existing "capture once" guard
         }
         if (dragging) {
             p1.x = world.x;
             p1.y = world.y;
             a1.start = { p1.x, p1.y };
             a2.start = a1.end();
+        } else if (dragMid) {
+            // Need to calculate distance from touch to a1 
+            float dx = world.x - a1.start.x;
+            float dy = world.y - a1.start.y;
+            a1.angle = atan2(dy, dx);
+            a2.start = a1.end();
+        } else if (dragEnd) {
+            // Need to calculate distance from touch to a2
+            float dx = world.x - a2.start.x;
+            float dy = world.y - a2.start.y;
+            a2.angle = atan2(dy, dx);
+            a2.angularVelocity = 0.0f;
         }
-
+        float totalEnergy;
+        float potentialEnergy;
+        float kineticEnergy;
         // --- PENDULUM PHYSICS RK4---
+        if (!dragging && !dragMid && !dragEnd) {
+        
+            State s {a1.angle-PI/2, a1.angularVelocity, a2.angle - PI/2, a2.angularVelocity};
 
-        State s {a1.angle-PI/2, a1.angularVelocity, a2.angle - PI/2, a2.angularVelocity};
+            State k1 = derivatives(s, a1, a2, g);
+            State k2 = derivatives(step(s, k1, dt/2.0f), a1, a2, g);
+            State k3 = derivatives(step(s, k2, dt/2.0f), a1, a2, g);
+            State k4 = derivatives(step(s, k3, dt), a1, a2, g);
 
-        State k1 = derivatives(s, a1, a2, g);
-        State k2 = derivatives(step(s, k1, dt/2.0f), a1, a2, g);
-        State k3 = derivatives(step(s, k2, dt/2.0f), a1, a2, g);
-        State k4 = derivatives(step(s, k3, dt), a1, a2, g);
+            //s_next = s + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
 
-        //s_next = s + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
+            State s_next = step(s, step(step(step(k1, k2, 2.0f), k3, 2.0f), k4, 1.0f), dt/6.0f);
 
-        State s_next = step(s, step(step(step(k1, k2, 2.0f), k3, 2.0f), k4, 1.0f), dt/6.0f);
+            a1.angle = s_next.theta1 + PI/2;
+            a1.angularVelocity = s_next.omega1;
+            a2.angle = s_next.theta2 + PI/2;
+            a2.angularVelocity = s_next.omega2;
 
-        a1.angle = s_next.theta1 + PI/2;
-        a1.angularVelocity = s_next.omega1;
-        a2.angle = s_next.theta2 + PI/2;
-        a2.angularVelocity = s_next.omega2;
+            a2.start = a1.end();
 
-        a2.start = a1.end();
+           
+        }
+        // NOTE: no longer accumulating an energy history.
+        // energy.push_back(totalEnergy);
 
-        // --- Energy calculations (scaled by /10000 to keep magnitudes readable) ---
-        // Also uses s_next
-        float deltaAngle = s_next.theta1 - s_next.theta2;
+        // --- Energy: computed EVERY frame from the arms' current state ---
+        // Works in both modes: RK4 writes the arms during physics; your finger writes
+        // them during a drag. Either way the arms are the source of truth.
+        float th1 = a1.angle - PI / 2.0f;   // convert to from-vertical for the physics formula
+        float th2 = a2.angle - PI / 2.0f;
+        float w1  = a1.angularVelocity;
+        float w2  = a2.angularVelocity;
+        float dTheta = th1 - th2;
 
-        float kineticEnergy = (0.5f * (a1.mass + a2.mass) * a1.length * a1.length * s_next.omega1 * s_next.omega1
-                            + 0.5f * a2.mass * a2.length * a2.length * s_next.omega2 * s_next.omega2
-                            + a2.mass * a1.length * a2.length * s_next.omega1 * s_next.omega2 * cos(deltaAngle)) / 10000.0f;
+        kineticEnergy = (0.5f * (a1.mass + a2.mass) * a1.length * a1.length * w1 * w1
+                    + 0.5f * a2.mass * a2.length * a2.length * w2 * w2
+                    + a2.mass * a1.length * a2.length * w1 * w2 * cos(dTheta)) / 10000.0f;
 
-        float potentialEnergy = (-g * (a1.mass + a2.mass) * a1.length * cos(s_next.theta1)
-                            - g * a2.mass * a2.length * cos(s_next.theta2)) / 10000.0f;
+        potentialEnergy = (-g * (a1.mass + a2.mass) * a1.length * cos(th1)
+                        - g * a2.mass * a2.length * cos(th2)) / 10000.0f;
 
-        float totalEnergy = kineticEnergy + potentialEnergy;
+        totalEnergy = kineticEnergy + potentialEnergy;
 
-        // Capture the TRUE launch energy exactly once, then never touch it again.
-        // This fixed baseline is what makes drift actually expose energy bleed.
         if (firstFrame) {
             initialEnergy = totalEnergy;
             firstFrame = false;
         }
-
-        // NOTE: no longer accumulating an energy history.
-        // energy.push_back(totalEnergy);
 
         // ================= DRAW =================
         BeginDrawing();
@@ -294,6 +360,12 @@ int main(void)
             DrawText(K.c_str(), 10, 35, 20, WHITE);
             DrawText(P.c_str(), 10, 60, 20, WHITE);
             DrawText(D.c_str(), 10, 85, 20, WHITE);
+
+            if (traceHover) {
+                trace.onhoverdraw();
+            } else {
+                trace.draw();
+            }
 
         EndDrawing();
 
